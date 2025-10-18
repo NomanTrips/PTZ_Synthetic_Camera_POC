@@ -20,9 +20,9 @@
 
 ## 1) Repo scaffold
 
-* [ ] `requirements.txt`: `pygame-ce`, `av`, `numpy`, `opencv-python`, `pyarrow`, `imageio`, `imageio-ffmpeg`
-* [ ] `src/ptz_poc/` package with modules below
-* [ ] `main.py` CLI: `--video PATH --out_dir PATH --size 256 --fps 24`
+* [x] `requirements.txt`: `pygame-ce`, `av`, `numpy`, `opencv-python`, `pyarrow`, `imageio`, `imageio-ffmpeg`
+* [x] `src/ptz_poc/` package with modules below
+* [x] `main.py` CLI: `--video PATH --out_dir PATH --size 256 --fps 24`
 
 **Acceptance:** `python main.py --video sample.mp4 --out_dir out/` opens a window.
 
@@ -30,18 +30,18 @@
 
 ## 2) VideoReader (PyAV)
 
-* [ ] Implement `VideoReader` → iterator yielding `(frame_rgb_np, pts_sec)`
-* [ ] Normalize to RGB uint8; store source `W,H,FPS`
+* [x] Implement `VideoReader` → iterator yielding `(frame_rgb_np, pts_sec)`
+* [x] Normalize to RGB uint8; store source `W,H,FPS`
 
 ---
 
 ## 3) Synthetic Rig (pan/tilt/zoom)
 
-* [ ] `Rig` class with state: `pan_deg`, `tilt_deg`, `zoom_norm ∈ [0,1]`
-* [ ] Params: `fov_x_deg`, `fov_y_deg`, output size `(H_out,W_out)`, rate/angle limits
-* [ ] `render(full_frame)` → crop a viewport based on current state, resize to `(H_out,W_out)`
-* [ ] `apply(dpan, dtilt, dzoom)` → clamp deltas, update state
-* [ ] Mapping: viewport width = `base_width * exp(-alpha * zoom_norm)`; center shifts with pan/tilt via intrinsics derived from FOV
+* [x] `Rig` class with state: `pan_deg`, `tilt_deg`, `zoom_norm ∈ [0,1]`
+* [x] Params: `fov_x_deg`, `fov_y_deg`, output size `(H_out,W_out)`, rate/angle limits
+* [x] `render(full_frame)` → crop a viewport based on current state, resize to `(H_out,W_out)`
+* [x] `apply(dpan, dtilt, dzoom)` → clamp deltas, update state
+* [x] Mapping: viewport width = `base_width * exp(-alpha * zoom_norm)`; center shifts with pan/tilt via intrinsics derived from FOV
 
 ---
 
