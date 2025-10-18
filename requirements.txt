@@ -1,0 +1,7 @@
+pygame-ce
+av
+numpy
+opencv-python
+pyarrow
+imageio
+imageio-ffmpeg
