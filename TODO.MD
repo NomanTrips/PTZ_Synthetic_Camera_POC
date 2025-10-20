@@ -63,22 +63,22 @@
 
 ## 6) Episode logger (LeRobot‑friendly)
 
-* [ ] `EpisodeWriter` manages one episode:
+* [x] `EpisodeWriter` manages one episode:
 
   * MP4 muxer for `observation.image` (via `imageio-ffmpeg` @ target FPS)
   * In-memory lists for parquet columns: `episode_index, frame_index, timestamp, observation.state[3], action[3]`
-* [ ] On `end_episode()`: write Parquet, close MP4
+* [x] On `end_episode()`: write Parquet, close MP4
 
 ---
 
 ## 7) Dataset layout + meta
 
-* [ ] Create folder structure:
+* [x] Create folder structure:
 
   * `meta/info.json`
   * `data/chunk-000/episode_{idx:06d}.parquet`
   * `videos/chunk-000/observation.image/episode_{idx:06d}.mp4`
-* [ ] Write `meta/info.json` template (below) at start; update counts after capture
+* [x] Write `meta/info.json` template (below) at start; update counts after capture
 
 ---
 
