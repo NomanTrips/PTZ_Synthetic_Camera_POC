@@ -55,9 +55,9 @@
 
 ## 5) HUD renderer
 
-* [ ] Draw viewport to window (blit)
-* [ ] Overlay center crosshair
-* [ ] Tiny text with `pan, tilt, zoom`
+* [x] Draw viewport to window (blit)
+* [x] Overlay center crosshair
+* [x] Tiny text with `pan, tilt, zoom`
 
 ---
 
