@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 import pygame
 
-from ptz_poc import InputHandler, Rig, VideoReader
+from ptz_poc import HUDRenderer, InputHandler, Rig, VideoReader
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -56,6 +56,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         rig = Rig(fov_x_deg=80.0, fov_y_deg=60.0, output_size=(args.size, args.size))
         input_handler = InputHandler(pan_speed=2.5, tilt_speed=2.5, zoom_step=0.05)
+        hud = HUDRenderer(window_size)
 
         recording = False
         episode_index = 0
@@ -107,7 +108,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             rig.apply(*action)
 
             screen.fill((0, 0, 0))
-            screen.blit(frame_surface, (0, 0))
+            hud.draw(screen, frame_surface, state_before)
             pygame.display.flip()
             clock.tick(args.fps)
 
