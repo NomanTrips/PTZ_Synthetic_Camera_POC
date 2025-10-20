@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 import pygame
 
-from ptz_poc import HUDRenderer, InputHandler, Rig, VideoReader
+from ptz_poc import DatasetManager, EpisodeWriter, HUDRenderer, InputHandler, Rig, VideoReader
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -47,6 +47,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         raise RuntimeError(f"Video {args.video} does not contain any decodable frames")
 
     captured_episodes = 0
+    total_logged_frames = 0
 
     pygame.init()
     try:
@@ -58,11 +59,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         input_handler = InputHandler(pan_speed=2.5, tilt_speed=2.5, zoom_step=0.05)
         hud = HUDRenderer(window_size)
 
+        dataset = DatasetManager(args.out_dir, fps=args.fps)
+
         recording = False
         episode_index = 0
         frame_index = 0
-        current_episode: list[dict[str, object]] = []
-        recorded_episodes: list[list[dict[str, object]]] = []
+        episode_writer: EpisodeWriter | None = None
 
         clock = pygame.time.Clock()
         while True:
@@ -72,37 +74,44 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             command = input_handler.poll()
             if command.quit_requested:
-                if recording and current_episode:
-                    recorded_episodes.append(current_episode)
-                    episode_index += 1
+                if recording and episode_writer is not None:
+                    frames = episode_writer.close()
+                    dataset.complete_episode(episode_writer, frames)
+                    total_logged_frames += frames
+                    episode_index += int(frames > 0)
+                    recording = False
+                    episode_writer = None
                 break
 
             if command.toggle_recording:
                 if recording:
-                    if current_episode:
-                        recorded_episodes.append(current_episode)
+                    frames = 0
+                    if episode_writer is not None:
+                        frames = episode_writer.close()
+                        dataset.complete_episode(episode_writer, frames)
+                        total_logged_frames += frames
+                        episode_writer = None
+                    if frames > 0:
                         episode_index += 1
-                    current_episode = []
                     recording = False
                     frame_index = 0
                 else:
+                    episode_writer = dataset.create_episode_writer(episode_index)
                     recording = True
-                    current_episode = []
                     frame_index = 0
 
             state_before = rig.state
             action = (command.dpan, command.dtilt, command.dzoom)
 
             if recording:
-                current_episode.append(
-                    {
-                        "episode_index": episode_index,
-                        "frame_index": frame_index,
-                        "timestamp": pts_sec,
-                        "state": (state_before.pan_deg, state_before.tilt_deg, state_before.zoom_norm),
-                        "action": action,
-                    }
-                )
+                if episode_writer is not None:
+                    episode_writer.append(
+                        viewport,
+                        frame_index=frame_index,
+                        timestamp=pts_sec,
+                        state=(state_before.pan_deg, state_before.tilt_deg, state_before.zoom_norm),
+                        action=action,
+                    )
                 frame_index += 1
 
             rig.apply(*action)
@@ -115,16 +124,21 @@ def main(argv: Optional[list[str]] = None) -> int:
             try:
                 full_frame, pts_sec = next(frame_iter)
             except StopIteration:
-                if recording and current_episode:
-                    recorded_episodes.append(current_episode)
-                    episode_index += 1
+                if recording and episode_writer is not None:
+                    frames = episode_writer.close()
+                    dataset.complete_episode(episode_writer, frames)
+                    total_logged_frames += frames
+                    episode_index += int(frames > 0)
+                    recording = False
+                    episode_writer = None
                 break
         captured_episodes = episode_index
+        dataset.finalize()
     finally:
         pygame.quit()
 
     if captured_episodes:
-        print(f"Captured {captured_episodes} episode(s)")
+        print(f"Captured {captured_episodes} episode(s) with {total_logged_frames} frame(s)")
 
     return 0
 
