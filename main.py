@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 import pygame
 
-from ptz_poc import VideoReader
+from ptz_poc import InputHandler, Rig, VideoReader
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -42,9 +42,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     reader = VideoReader(args.video)
     frame_iter = iter(reader)
     try:
-        first_frame, _ = next(frame_iter)
+        full_frame, pts_sec = next(frame_iter)
     except StopIteration:
         raise RuntimeError(f"Video {args.video} does not contain any decodable frames")
+
+    captured_episodes = 0
 
     pygame.init()
     try:
@@ -52,22 +54,76 @@ def main(argv: Optional[list[str]] = None) -> int:
         screen = pygame.display.set_mode(window_size)
         pygame.display.set_caption("PTZ Synthetic Camera POC")
 
-        frame_surface = frame_to_surface(first_frame)
-        frame_surface = pygame.transform.smoothscale(frame_surface, window_size)
+        rig = Rig(fov_x_deg=80.0, fov_y_deg=60.0, output_size=(args.size, args.size))
+        input_handler = InputHandler(pan_speed=2.5, tilt_speed=2.5, zoom_step=0.05)
+
+        recording = False
+        episode_index = 0
+        frame_index = 0
+        current_episode: list[dict[str, object]] = []
+        recorded_episodes: list[list[dict[str, object]]] = []
 
         clock = pygame.time.Clock()
-        running = True
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
+        while True:
+            viewport = rig.render(full_frame)
+            frame_surface = frame_to_surface(viewport)
+            frame_surface = pygame.transform.smoothscale(frame_surface, window_size)
+
+            command = input_handler.poll()
+            if command.quit_requested:
+                if recording and current_episode:
+                    recorded_episodes.append(current_episode)
+                    episode_index += 1
+                break
+
+            if command.toggle_recording:
+                if recording:
+                    if current_episode:
+                        recorded_episodes.append(current_episode)
+                        episode_index += 1
+                    current_episode = []
+                    recording = False
+                    frame_index = 0
+                else:
+                    recording = True
+                    current_episode = []
+                    frame_index = 0
+
+            state_before = rig.state
+            action = (command.dpan, command.dtilt, command.dzoom)
+
+            if recording:
+                current_episode.append(
+                    {
+                        "episode_index": episode_index,
+                        "frame_index": frame_index,
+                        "timestamp": pts_sec,
+                        "state": (state_before.pan_deg, state_before.tilt_deg, state_before.zoom_norm),
+                        "action": action,
+                    }
+                )
+                frame_index += 1
+
+            rig.apply(*action)
 
             screen.fill((0, 0, 0))
             screen.blit(frame_surface, (0, 0))
             pygame.display.flip()
             clock.tick(args.fps)
+
+            try:
+                full_frame, pts_sec = next(frame_iter)
+            except StopIteration:
+                if recording and current_episode:
+                    recorded_episodes.append(current_episode)
+                    episode_index += 1
+                break
+        captured_episodes = episode_index
     finally:
         pygame.quit()
+
+    if captured_episodes:
+        print(f"Captured {captured_episodes} episode(s)")
 
     return 0
 
