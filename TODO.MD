@@ -47,9 +47,9 @@
 
 ## 4) Input handler (pygame)
 
-* [ ] Key repeat for **WASD** → continuous deltas per tick
-* [ ] Mouse wheel → zoom step per notch
-* [ ] `Space` toggles recording; `Esc` quits app
+* [x] Key repeat for **WASD** → continuous deltas per tick
+* [x] Mouse wheel → zoom step per notch
+* [x] `Space` toggles recording; `Esc` quits app
 
 ---
 
@@ -84,8 +84,8 @@
 
 ## 8) Main loop wiring
 
-* [ ] Orchestrate: read next video frame → render viewport → draw HUD → poll input → **log (state_before, action)** → `apply` deltas → advance
-* [ ] `Space` starts/ends an episode (can start multiple episodes within one run)
+* [x] Orchestrate: read next video frame → render viewport → draw HUD → poll input → **log (state_before, action)** → `apply` deltas → advance
+* [x] `Space` starts/ends an episode (can start multiple episodes within one run)
 
 ---
 
