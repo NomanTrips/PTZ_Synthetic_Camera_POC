@@ -89,62 +89,86 @@
 
 ---
 
-## LeRobot‑friendly schema (v0)
+## 9) Upgrade output to **LeRobot v3.0** (bare minimum)
 
-**`meta/info.json` template** (fill counts later):
+> Produce v3.0 layout without fancy chunking: write **one** data file and **one** video file with indices `{chunk_index=0,file_index=0}`; create the required `meta/*` parquet files.
 
-```json
-{
-  "codebase_version": "v2.0",
-  "robot_type": "unknown",
-  "total_episodes": 0,
-  "total_frames": 0,
-  "total_tasks": 1,
-  "total_videos": 0,
-  "total_chunks": 1,
-  "chunks_size": 1000,
-  "fps": 24,
-  "splits": { "train": "0:1000000" },
-  "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
-  "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
-  "features": {
-    "observation.image": {
-      "dtype": "video",
-      "shape": [256, 256, 3],
-      "names": ["height","width","channel"],
-      "video_info": {
-        "video.fps": 24.0,
-        "video.codec": "h264",
-        "video.pix_fmt": "yuv420p",
-        "video.is_depth_map": false,
-        "has_audio": false
-      }
-    },
-    "observation.state": { "dtype": "float32", "shape": [3],
-      "names": { "motors": ["pan","tilt","zoom"] } },
-    "action": { "dtype": "float32", "shape": [3],
-      "names": { "motors": ["dpan","dtilt","dzoom"] } },
-    "episode_index": { "dtype": "int64", "shape": [1] },
-    "frame_index": { "dtype": "int64", "shape": [1] },
-    "timestamp": { "dtype": "float32", "shape": [1] },
-    "next.reward": { "dtype": "float32", "shape": [1] },
-    "next.done": { "dtype": "bool", "shape": [1] },
-    "next.success": { "dtype": "bool", "shape": [1] },
-    "index": { "dtype": "int64", "shape": [1] },
-    "task_index": { "dtype": "int64", "shape": [1] }
-  }
-}
+* [ ] **info.json → v3.0**
+
+  * Set `codebase_version = "v3.0"`.
+  * Remove: `total_videos`, `total_chunks`.
+  * Keep/compute: `total_episodes`, `total_frames`, `total_tasks`.
+  * Add: `data_files_size_in_mb` (e.g., 100), `video_files_size_in_mb` (e.g., 500).
+  * Paths:
+
+    * `data_path = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"`
+    * `video_path = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"`
+  * Ensure top-level `fps` is **int** (e.g., 24).
+  * For every **non-video** feature (state/action/indices/timestamp/next.*): add `"fps": <int>`.
+
+* [ ] **Writer paths (v3)**
+
+  * Write **data** to: `data/chunk-000/file-000.parquet` (merge all frames of the episode).
+  * Write **video** to: `videos/observation.image/chunk-000/file-000.mp4`.
+  * Keep column names/dtypes same as v2 for rows (state/action/indices/timestamp/next.*), but file names follow v3.
+
+* [ ] **meta/tasks (required)**
+
+  * File: `meta/tasks/chunk-000/file-000.parquet`.
+  * Schema: **index = task string**, column `task_index:int64`.
+  * For single-task POC:
+
+    * DataFrame: index `["Center and zoom on the target."]`, column `task_index=[0]`.
+
+* [ ] **meta/episodes (required)**
+
+  * File: `meta/episodes/chunk-000/episodes_000.parquet`.
+  * Minimal columns (one row per episode):
+
+    * `episode_index:int64` (0-based)
+    * `data/chunk_index:int64` (=0)
+    * `data/file_index:int64` (=0)
+    * `dataset_from_index:int64` (=0)
+    * `dataset_to_index:int64` (=num_frames)
+    * For each video key (here `observation.image`):
+
+      * `videos/observation.image/chunk_index:int64` (=0)
+      * `videos/observation.image/file_index:int64` (=0)
+      * `videos/observation.image/from_timestamp:float32` (=0.0)
+      * `videos/observation.image/to_timestamp:float32` (=duration_s)
+    * `tasks:list[str]` (e.g., `[
+      "Center and zoom on the target."]`)
+    * `length:int64` (=num_frames)
+
+* [ ] **meta/episodes_stats (required by v3 tools)**
+
+  * File: `meta/episodes_stats/chunk-000/file-000.parquet`.
+  * One row per episode with simple stats. Minimal viable set:
+
+    * `episode_index:int64`
+    * `stats/action.mean:float32`, `stats/action.std:float32`, `stats/action.min:float32`, `stats/action.max:float32` (aggregate across action dims)
+    * `stats/state.mean:float32`, `stats/state.std:float32`, `stats/state.min:float32`, `stats/state.max:float32`
+  * Compute over the episode arrays; cast to float32.
+
+**Acceptance:**
+
+* Hub root shows:
+
+```
+meta/
+  info.json
+  tasks/chunk-000/file-000.parquet
+  episodes/chunk-000/episodes_000.parquet
+  episodes_stats/chunk-000/file-000.parquet
+data/
+  chunk-000/file-000.parquet
+videos/
+  observation.image/chunk-000/file-000.mp4
 ```
 
-**Parquet columns per frame** (v0):
+* `meta/info.json` has `codebase_version:"v3.0"`, paths with `{chunk_index,file_index}`, and `fps` fields for non-video features.
+* `lerobot_dataset_viz.py --repo-id <repo> --revision v3.0 --episode-index 0` opens the viewer.
 
-* `episode_index:int64`, `frame_index:int64`, `timestamp:float32`
-* `observation.state: float32[3]` (pan, tilt, zoom)
-* `action: float32[3]` (dpan, dtilt, dzoom)
-* `task_index:int64` (0)
-* `next.reward:float32` (0.0), `next.done:bool` (false), `next.success:bool` (false)
-
----
 
 ## Runbook (v0)
 
