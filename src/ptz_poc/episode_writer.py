@@ -196,19 +196,16 @@ class DatasetManager:
             / "file-000.mp4"
         )
 
-        self.tasks_path = self.meta_dir / "tasks" / "chunk-000" / "file-000.parquet"
+        self.tasks_path = self.meta_dir / "tasks.parquet"
         self.episodes_path = (
             self.meta_dir / "episodes" / "chunk-000" / "episodes_000.parquet"
         )
-        self.episodes_stats_path = (
-            self.meta_dir / "episodes_stats" / "chunk-000" / "file-000.parquet"
-        )
+        self.stats_path = self.meta_dir / "stats.json"
 
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
         self.video_path.parent.mkdir(parents=True, exist_ok=True)
         self.tasks_path.parent.mkdir(parents=True, exist_ok=True)
         self.episodes_path.parent.mkdir(parents=True, exist_ok=True)
-        self.episodes_stats_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._meta_base = _metadata_template(
             fps=int(self.fps),
@@ -235,6 +232,13 @@ class DatasetManager:
 
         self._video_writer: imageio.core.format.Format | None = None
         self._episode_records: List[Dict[str, object]] = []
+
+        self._image_min: np.ndarray | None = None
+        self._image_max: np.ndarray | None = None
+        self._image_sum = np.zeros(3, dtype=np.float64)
+        self._image_sum_sq = np.zeros(3, dtype=np.float64)
+        self._image_pixel_count = 0
+        self._image_frame_count = 0
 
     # ------------------------------------------------------------------
     # Episode management helpers
@@ -277,7 +281,7 @@ class DatasetManager:
 
         self._write_tasks_table()
         self._write_episodes_table()
-        self._write_episode_stats_table()
+        self._write_stats_file()
 
         meta = dict(self._meta_base)
         meta["total_frames"] = int(self.total_frames)
@@ -320,6 +324,25 @@ class DatasetManager:
     ) -> None:
         writer = self._ensure_video_writer()
         writer.append_data(frame)
+
+        frame_float = frame.astype(np.float32) / 255.0
+        channel_min = frame_float.min(axis=(0, 1)).astype(np.float64)
+        channel_max = frame_float.max(axis=(0, 1)).astype(np.float64)
+        channel_sum = frame_float.sum(axis=(0, 1))
+        channel_sum_sq = np.square(frame_float).sum(axis=(0, 1))
+        pixel_count = frame_float.shape[0] * frame_float.shape[1]
+
+        if self._image_min is None:
+            self._image_min = channel_min
+            self._image_max = channel_max
+        else:
+            self._image_min = np.minimum(self._image_min, channel_min)
+            self._image_max = np.maximum(self._image_max, channel_max)
+
+        self._image_sum += channel_sum.astype(np.float64)
+        self._image_sum_sq += channel_sum_sq.astype(np.float64)
+        self._image_pixel_count += int(pixel_count)
+        self._image_frame_count += 1
 
         self._data_rows["episode_index"].append(int(episode_index))
         self._data_rows["frame_index"].append(int(frame_index))
@@ -456,52 +479,99 @@ class DatasetManager:
         )
         pq.write_table(table, self.episodes_path)
 
-    def _write_episode_stats_table(self) -> None:
-        if not self._episode_records:
-            if self.episodes_stats_path.exists():
-                self.episodes_stats_path.unlink()
+    def _write_stats_file(self) -> None:
+        if not self.total_frames:
+            if self.stats_path.exists():
+                self.stats_path.unlink()
             return
 
-        episode_indices = []
-        action_mean = []
-        action_std = []
-        action_min = []
-        action_max = []
-        state_mean = []
-        state_std = []
-        state_min = []
-        state_max = []
+        def _to_list(value: np.ndarray | np.generic) -> List[object]:
+            arr = np.asarray(value)
+            if arr.ndim == 0:
+                return [arr.item()]
+            return arr.tolist()
 
-        for rec in self._episode_records:
-            episode_indices.append(rec["episode_index"])
-
-            actions = rec["actions"]
-            states = rec["states"]
-
-            action_mean.append(float(actions.mean()))
-            action_std.append(float(actions.std(ddof=0)))
-            action_min.append(float(actions.min()))
-            action_max.append(float(actions.max()))
-
-            state_mean.append(float(states.mean()))
-            state_std.append(float(states.std(ddof=0)))
-            state_min.append(float(states.min()))
-            state_max.append(float(states.max()))
-
-        table = pa.table(
-            {
-                "episode_index": pa.array(episode_indices, type=pa.int64()),
-                "stats/action.mean": pa.array(action_mean, type=pa.float32()),
-                "stats/action.std": pa.array(action_std, type=pa.float32()),
-                "stats/action.min": pa.array(action_min, type=pa.float32()),
-                "stats/action.max": pa.array(action_max, type=pa.float32()),
-                "stats/state.mean": pa.array(state_mean, type=pa.float32()),
-                "stats/state.std": pa.array(state_std, type=pa.float32()),
-                "stats/state.min": pa.array(state_min, type=pa.float32()),
-                "stats/state.max": pa.array(state_max, type=pa.float32()),
+        def _compute_stats(array: np.ndarray) -> Dict[str, object]:
+            arr = np.asarray(array)
+            arr_float = arr.astype(np.float64)
+            min_val = arr.min(axis=0)
+            max_val = arr.max(axis=0)
+            mean_val = arr_float.mean(axis=0)
+            std_val = arr_float.std(axis=0, ddof=0)
+            count = int(arr.shape[0]) if arr.ndim > 0 else int(arr.size)
+            return {
+                "min": _to_list(min_val),
+                "max": _to_list(max_val),
+                "mean": _to_list(mean_val),
+                "std": _to_list(std_val),
+                "count": [count],
             }
-        )
-        pq.write_table(table, self.episodes_stats_path)
+
+        def _compute_bool_stats(array: np.ndarray) -> Dict[str, object]:
+            arr = np.asarray(array, dtype=bool)
+            arr_float = arr.astype(np.float64)
+            min_val = arr.min(axis=0)
+            max_val = arr.max(axis=0)
+            mean_val = arr_float.mean(axis=0)
+            std_val = arr_float.std(axis=0, ddof=0)
+            count = int(arr.shape[0]) if arr.ndim > 0 else int(arr.size)
+            return {
+                "min": _to_list(min_val),
+                "max": _to_list(max_val),
+                "mean": _to_list(mean_val),
+                "std": _to_list(std_val),
+                "count": [count],
+            }
+
+        stats_payload: Dict[str, object] = {}
+
+        index_array = np.array(self._data_rows["index"], dtype=np.int64)
+        stats_payload["index"] = _compute_stats(index_array.reshape(-1, 1))
+
+        next_success = np.array(self._data_rows["next.success"], dtype=bool)
+        stats_payload["next.success"] = _compute_bool_stats(next_success.reshape(-1, 1))
+
+        state_array = np.array(self._data_rows["observation.state"], dtype=np.float32)
+        stats_payload["observation.state"] = _compute_stats(state_array)
+
+        next_done = np.array(self._data_rows["next.done"], dtype=bool)
+        stats_payload["next.done"] = _compute_bool_stats(next_done.reshape(-1, 1))
+
+        timestamp_array = np.array(self._data_rows["timestamp"], dtype=np.float32)
+        stats_payload["timestamp"] = _compute_stats(timestamp_array.reshape(-1, 1))
+
+        episode_index_array = np.array(self._data_rows["episode_index"], dtype=np.int64)
+        stats_payload["episode_index"] = _compute_stats(episode_index_array.reshape(-1, 1))
+
+        frame_index_array = np.array(self._data_rows["frame_index"], dtype=np.int64)
+        stats_payload["frame_index"] = _compute_stats(frame_index_array.reshape(-1, 1))
+
+        action_array = np.array(self._data_rows["action"], dtype=np.float32)
+        stats_payload["action"] = _compute_stats(action_array)
+
+        task_index_array = np.array(self._data_rows["task_index"], dtype=np.int64)
+        stats_payload["task_index"] = _compute_stats(task_index_array.reshape(-1, 1))
+
+        next_reward_array = np.array(self._data_rows["next.reward"], dtype=np.float32)
+        stats_payload["next.reward"] = _compute_stats(next_reward_array.reshape(-1, 1))
+
+        if self._image_frame_count and self._image_min is not None and self._image_max is not None:
+            mean = self._image_sum / float(self._image_pixel_count)
+            variance = self._image_sum_sq / float(self._image_pixel_count) - mean**2
+            variance = np.clip(variance, 0.0, None)
+            std = np.sqrt(variance)
+
+            stats_payload["observation.image"] = {
+                "min": _to_list(self._image_min.reshape(3, 1, 1)),
+                "max": _to_list(self._image_max.reshape(3, 1, 1)),
+                "mean": _to_list(mean.reshape(3, 1, 1)),
+                "std": _to_list(std.reshape(3, 1, 1)),
+                "count": [int(self._image_frame_count)],
+            }
+
+        with self.stats_path.open("w", encoding="utf-8") as f:
+            json.dump(stats_payload, f, indent=2)
+            f.write("\n")
 
     def _write_meta(self, payload: Dict[str, object]) -> None:
         """Write ``payload`` to ``meta/info.json`` with indentation."""
