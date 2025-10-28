@@ -18,9 +18,16 @@ from ptz_poc import DatasetManager, EpisodeWriter, HUDRenderer, InputHandler, Ri
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", type=Path, required=True, help="Path to the input video")
-    parser.add_argument("--out_dir", type=Path, required=True, help="Directory for dataset output")
+    parser.add_argument(
+        "--out_dir", type=Path, required=True, help="Directory for dataset output"
+    )
     parser.add_argument("--size", type=int, default=256, help="Viewport/window size in pixels")
     parser.add_argument("--fps", type=int, default=24, help="Target output FPS")
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append captured data to an existing dataset instead of starting fresh",
+    )
     return parser.parse_args(argv)
 
 
@@ -59,10 +66,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         input_handler = InputHandler(pan_speed=2.5, tilt_speed=2.5, zoom_step=0.05)
         hud = HUDRenderer(window_size)
 
-        dataset = DatasetManager(args.out_dir, fps=args.fps)
+        dataset = DatasetManager(args.out_dir, fps=args.fps, append=args.append)
 
         recording = False
-        episode_index = 0
+        base_episode_index = dataset.total_episodes
+        episode_index = base_episode_index
         frame_index = 0
         episode_writer: EpisodeWriter | None = None
 
@@ -132,7 +140,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     recording = False
                     episode_writer = None
                 break
-        captured_episodes = episode_index
+        captured_episodes = episode_index - base_episode_index
         dataset.finalize()
     finally:
         pygame.quit()

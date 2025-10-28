@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import imageio
 import numpy as np
@@ -175,6 +175,7 @@ class DatasetManager:
         fps: float,
         chunk_size: int = 1000,
         video_key: str = DEFAULT_VIDEO_KEY,
+        append: bool = False,
     ) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -186,6 +187,7 @@ class DatasetManager:
         self.fps = float(fps)
         self.chunk_size = int(chunk_size)
         self.video_key = video_key
+        self.append = bool(append)
 
         self.data_path = self.root / "data" / "chunk-000" / "file-000.parquet"
         self.video_path = (
@@ -207,15 +209,65 @@ class DatasetManager:
         self.tasks_path.parent.mkdir(parents=True, exist_ok=True)
         self.episodes_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._meta_base = _metadata_template(
-            fps=int(self.fps),
-            chunk_size=self.chunk_size,
-            video_key=self.video_key,
-        )
+        existing_meta: Optional[Dict[str, object]] = None
+        if self.append and self.meta_path.exists():
+            try:
+                with self.meta_path.open("r", encoding="utf-8") as f:
+                    existing_meta = json.load(f)
+            except json.JSONDecodeError:
+                existing_meta = None
+
+        if existing_meta is not None:
+            self._meta_base = existing_meta
+            self.total_frames = int(existing_meta.get("total_frames", 0))
+            self.total_episodes = int(existing_meta.get("total_episodes", 0))
+            image_shape = (
+                existing_meta.get("features", {})
+                .get("observation.image", {})
+                .get("shape", [256, 256, 3])
+            )
+        else:
+            self._meta_base = _metadata_template(
+                fps=int(self.fps),
+                chunk_size=self.chunk_size,
+                video_key=self.video_key,
+            )
+            self.total_frames = 0
+            self.total_episodes = 0
+            image_shape = self._meta_base["features"]["observation.image"].get(
+                "shape", [256, 256, 3]
+            )
+
+        self._image_shape = tuple(int(x) for x in image_shape)
+
         self._write_meta(self._meta_base)
 
-        self.total_frames = 0
-        self.total_episodes = 0
+        self._existing_stats: Optional[Dict[str, object]] = None
+        if self.append and self.stats_path.exists():
+            try:
+                with self.stats_path.open("r", encoding="utf-8") as f:
+                    self._existing_stats = json.load(f)
+            except json.JSONDecodeError:
+                self._existing_stats = None
+
+        self._new_frame_count = 0
+
+        self._episode_records: List[Dict[str, object]] = []
+        if self.append and self.episodes_path.exists():
+            self._episode_records.extend(self._load_existing_episode_records())
+        if not self._episode_records:
+            self.total_episodes = 0
+        else:
+            self.total_episodes = len(self._episode_records)
+
+        self._video_temp_path: Optional[Path] = None
+        if self.append and self.video_path.exists():
+            self._video_temp_path = self.video_path.with_name(
+                f"{self.video_path.stem}.append{self.video_path.suffix}"
+            )
+            if self._video_temp_path.exists():
+                self._video_temp_path.unlink()
+        self._video_output_path = self._video_temp_path or self.video_path
 
         self._data_rows: Dict[str, List[object]] = {
             "episode_index": [],
@@ -231,7 +283,6 @@ class DatasetManager:
         }
 
         self._video_writer: imageio.core.format.Format | None = None
-        self._episode_records: List[Dict[str, object]] = []
 
         self._image_min: np.ndarray | None = None
         self._image_max: np.ndarray | None = None
@@ -251,7 +302,7 @@ class DatasetManager:
             dataset=self,
             fps=self.fps,
             data_path=self.data_path,
-            video_path=self.video_path,
+            video_path=self._video_output_path,
             chunk_index=0,
         )
 
@@ -270,14 +321,35 @@ class DatasetManager:
             self._video_writer.close()
             self._video_writer = None
 
-        if self.total_frames:
-            table = self._build_dataset_table()
-            pq.write_table(table, self.data_path)
-        elif self.data_path.exists():
-            self.data_path.unlink()
+        new_frame_count = self._new_frame_count
 
-        if not self.total_frames and self.video_path.exists():
-            self.video_path.unlink()
+        if self.append:
+            if new_frame_count:
+                new_table = self._build_dataset_table()
+                if self.data_path.exists():
+                    existing_table = pq.read_table(self.data_path)
+                    if existing_table.num_rows:
+                        combined_table = pa.concat_tables([existing_table, new_table])
+                    else:
+                        combined_table = new_table
+                else:
+                    combined_table = new_table
+                pq.write_table(combined_table, self.data_path)
+        else:
+            if new_frame_count:
+                table = self._build_dataset_table()
+                pq.write_table(table, self.data_path)
+            elif self.data_path.exists():
+                self.data_path.unlink()
+
+        if self.append:
+            if new_frame_count and self._video_temp_path is not None:
+                self._merge_videos(self.video_path, self._video_temp_path)
+            elif not new_frame_count and self._video_temp_path is not None and self._video_temp_path.exists():
+                self._video_temp_path.unlink()
+        else:
+            if not new_frame_count and self.video_path.exists():
+                self.video_path.unlink()
 
         self._write_tasks_table()
         self._write_episodes_table()
@@ -304,13 +376,59 @@ class DatasetManager:
     def _ensure_video_writer(self) -> imageio.core.format.Format:
         if self._video_writer is None:
             self._video_writer = imageio.get_writer(
-                str(self.video_path),
+                str(self._video_output_path),
                 fps=float(self.fps),
                 codec="libx264",
                 format="FFMPEG",
                 output_params=["-pix_fmt", "yuv420p"],
             )
         return self._video_writer
+
+    def _merge_videos(self, existing_path: Path, new_path: Path) -> None:
+        if not new_path.exists():
+            return
+
+        if not existing_path.exists():
+            if new_path != existing_path:
+                new_path.replace(existing_path)
+            return
+
+        temp_output = existing_path.with_name(
+            f"{existing_path.stem}.tmp{existing_path.suffix}"
+        )
+        if temp_output.exists():
+            temp_output.unlink()
+
+        writer = imageio.get_writer(
+            str(temp_output),
+            fps=float(self.fps),
+            codec="libx264",
+            format="FFMPEG",
+            output_params=["-pix_fmt", "yuv420p"],
+        )
+
+        try:
+            existing_reader = imageio.get_reader(str(existing_path))
+            try:
+                for frame in existing_reader:
+                    writer.append_data(frame)
+            finally:
+                existing_reader.close()
+
+            new_reader = imageio.get_reader(str(new_path))
+            try:
+                for frame in new_reader:
+                    writer.append_data(frame)
+            finally:
+                new_reader.close()
+        finally:
+            writer.close()
+
+        existing_path.unlink()
+        temp_output.replace(existing_path)
+
+        if new_path.exists() and new_path != existing_path:
+            new_path.unlink()
 
     def _append_frame(
         self,
@@ -356,6 +474,7 @@ class DatasetManager:
         self._data_rows["index"].append(int(frame_index))
 
         self.total_frames += 1
+        self._new_frame_count += 1
 
     def _register_episode(
         self,
@@ -387,6 +506,39 @@ class DatasetManager:
         )
 
         self.total_episodes = len(self._episode_records)
+
+    def _load_existing_episode_records(self) -> List[Dict[str, object]]:
+        records: List[Dict[str, object]] = []
+        try:
+            table = pq.read_table(self.episodes_path)
+        except (FileNotFoundError, OSError):
+            return records
+
+        for row in table.to_pylist():
+            frame_count = int(row.get("length", 0))
+            dataset_from_index = int(row.get("dataset_from_index", 0))
+            dataset_to_index = int(row.get("dataset_to_index", dataset_from_index + frame_count))
+            video_from_timestamp = float(
+                row.get("videos/observation.image/from_timestamp", 0.0)
+            )
+            video_to_timestamp = float(
+                row.get("videos/observation.image/to_timestamp", video_from_timestamp)
+            )
+
+            records.append(
+                {
+                    "episode_index": int(row.get("episode_index", len(records))),
+                    "frame_count": frame_count,
+                    "dataset_from_index": dataset_from_index,
+                    "dataset_to_index": dataset_to_index,
+                    "video_from_timestamp": video_from_timestamp,
+                    "video_to_timestamp": video_to_timestamp,
+                    "states": None,
+                    "actions": None,
+                }
+            )
+
+        return records
 
     def _build_dataset_table(self) -> pa.Table:
         if self.total_frames == 0:
@@ -480,7 +632,10 @@ class DatasetManager:
         pq.write_table(table, self.episodes_path)
 
     def _write_stats_file(self) -> None:
-        if not self.total_frames:
+        if self.append and self._new_frame_count == 0:
+            return
+
+        if not self.append and not self._data_rows["episode_index"]:
             if self.stats_path.exists():
                 self.stats_path.unlink()
             return
@@ -494,10 +649,10 @@ class DatasetManager:
         def _compute_stats(array: np.ndarray) -> Dict[str, object]:
             arr = np.asarray(array)
             arr_float = arr.astype(np.float64)
-            min_val = arr.min(axis=0)
-            max_val = arr.max(axis=0)
-            mean_val = arr_float.mean(axis=0)
-            std_val = arr_float.std(axis=0, ddof=0)
+            min_val = arr.min(axis=0) if arr.size else np.array([0])
+            max_val = arr.max(axis=0) if arr.size else np.array([0])
+            mean_val = arr_float.mean(axis=0) if arr.size else np.zeros_like(min_val, dtype=np.float64)
+            std_val = arr_float.std(axis=0, ddof=0) if arr.size else np.zeros_like(min_val, dtype=np.float64)
             count = int(arr.shape[0]) if arr.ndim > 0 else int(arr.size)
             return {
                 "min": _to_list(min_val),
@@ -510,10 +665,10 @@ class DatasetManager:
         def _compute_bool_stats(array: np.ndarray) -> Dict[str, object]:
             arr = np.asarray(array, dtype=bool)
             arr_float = arr.astype(np.float64)
-            min_val = arr.min(axis=0)
-            max_val = arr.max(axis=0)
-            mean_val = arr_float.mean(axis=0)
-            std_val = arr_float.std(axis=0, ddof=0)
+            min_val = arr.min(axis=0) if arr.size else np.array([False])
+            max_val = arr.max(axis=0) if arr.size else np.array([False])
+            mean_val = arr_float.mean(axis=0) if arr.size else np.zeros_like(min_val, dtype=np.float64)
+            std_val = arr_float.std(axis=0, ddof=0) if arr.size else np.zeros_like(min_val, dtype=np.float64)
             count = int(arr.shape[0]) if arr.ndim > 0 else int(arr.size)
             return {
                 "min": _to_list(min_val),
@@ -523,51 +678,209 @@ class DatasetManager:
                 "count": [count],
             }
 
+        def _extract_count(stats: Dict[str, object] | None) -> int:
+            if not stats:
+                return 0
+            count_val = stats.get("count", [])
+            if isinstance(count_val, list) and count_val:
+                return int(count_val[0])
+            if isinstance(count_val, (int, float)):
+                return int(count_val)
+            return 0
+
+        def _combine_numeric_stats(
+            existing: Optional[Dict[str, object]], new: Dict[str, object]
+        ) -> Dict[str, object]:
+            existing_count = _extract_count(existing)
+            new_count = _extract_count(new)
+
+            if existing_count == 0:
+                return new
+            if new_count == 0:
+                return existing if existing is not None else new
+
+            existing_mean = np.asarray(existing["mean"], dtype=np.float64)
+            new_mean = np.asarray(new["mean"], dtype=np.float64)
+            combined_count = existing_count + new_count
+
+            combined_mean = (
+                existing_mean * existing_count + new_mean * new_count
+            ) / combined_count
+
+            existing_var = np.square(np.asarray(existing["std"], dtype=np.float64))
+            new_var = np.square(np.asarray(new["std"], dtype=np.float64))
+            combined_var = (
+                existing_count
+                * (existing_var + np.square(existing_mean - combined_mean))
+                + new_count * (new_var + np.square(new_mean - combined_mean))
+            ) / combined_count
+
+            combined_std = np.sqrt(np.clip(combined_var, 0.0, None))
+
+            combined_min = np.minimum(
+                np.asarray(existing["min"]), np.asarray(new["min"])
+            )
+            combined_max = np.maximum(
+                np.asarray(existing["max"]), np.asarray(new["max"])
+            )
+
+            return {
+                "min": _to_list(combined_min),
+                "max": _to_list(combined_max),
+                "mean": _to_list(combined_mean),
+                "std": _to_list(combined_std),
+                "count": [combined_count],
+            }
+
+        def _combine_image_stats(
+            existing: Optional[Dict[str, object]], new: Dict[str, object]
+        ) -> Dict[str, object]:
+            existing_frames = _extract_count(existing)
+            new_frames = _extract_count(new)
+
+            if existing_frames == 0:
+                return new
+            if new_frames == 0:
+                return existing if existing is not None else new
+
+            frame_pixels = int(self._image_shape[0]) * int(self._image_shape[1])
+            existing_samples = existing_frames * frame_pixels
+            new_samples = new_frames * frame_pixels
+
+            existing_mean = np.asarray(existing["mean"], dtype=np.float64)
+            new_mean = np.asarray(new["mean"], dtype=np.float64)
+            combined_samples = existing_samples + new_samples
+
+            combined_mean = (
+                existing_mean * existing_samples + new_mean * new_samples
+            ) / combined_samples
+
+            existing_var = np.square(np.asarray(existing["std"], dtype=np.float64))
+            new_var = np.square(np.asarray(new["std"], dtype=np.float64))
+            combined_var = (
+                existing_samples
+                * (existing_var + np.square(existing_mean - combined_mean))
+                + new_samples * (new_var + np.square(new_mean - combined_mean))
+            ) / combined_samples
+
+            combined_std = np.sqrt(np.clip(combined_var, 0.0, None))
+            combined_min = np.minimum(
+                np.asarray(existing["min"]), np.asarray(new["min"])
+            )
+            combined_max = np.maximum(
+                np.asarray(existing["max"]), np.asarray(new["max"])
+            )
+
+            return {
+                "min": _to_list(combined_min),
+                "max": _to_list(combined_max),
+                "mean": _to_list(combined_mean),
+                "std": _to_list(combined_std),
+                "count": [existing_frames + new_frames],
+            }
+
+        existing_stats = self._existing_stats if self.append else None
+
         stats_payload: Dict[str, object] = {}
 
         index_array = np.array(self._data_rows["index"], dtype=np.int64)
-        stats_payload["index"] = _compute_stats(index_array.reshape(-1, 1))
+        index_stats = _compute_stats(index_array.reshape(-1, 1))
+        stats_payload["index"] = _combine_numeric_stats(
+            existing_stats.get("index") if existing_stats else None, index_stats
+        )
 
         next_success = np.array(self._data_rows["next.success"], dtype=bool)
-        stats_payload["next.success"] = _compute_bool_stats(next_success.reshape(-1, 1))
+        next_success_stats = _compute_bool_stats(next_success.reshape(-1, 1))
+        stats_payload["next.success"] = _combine_numeric_stats(
+            existing_stats.get("next.success") if existing_stats else None,
+            next_success_stats,
+        )
 
         state_array = np.array(self._data_rows["observation.state"], dtype=np.float32)
-        stats_payload["observation.state"] = _compute_stats(state_array)
+        state_stats = _compute_stats(state_array)
+        stats_payload["observation.state"] = _combine_numeric_stats(
+            existing_stats.get("observation.state") if existing_stats else None,
+            state_stats,
+        )
 
         next_done = np.array(self._data_rows["next.done"], dtype=bool)
-        stats_payload["next.done"] = _compute_bool_stats(next_done.reshape(-1, 1))
+        next_done_stats = _compute_bool_stats(next_done.reshape(-1, 1))
+        stats_payload["next.done"] = _combine_numeric_stats(
+            existing_stats.get("next.done") if existing_stats else None,
+            next_done_stats,
+        )
 
         timestamp_array = np.array(self._data_rows["timestamp"], dtype=np.float32)
-        stats_payload["timestamp"] = _compute_stats(timestamp_array.reshape(-1, 1))
+        timestamp_stats = _compute_stats(timestamp_array.reshape(-1, 1))
+        stats_payload["timestamp"] = _combine_numeric_stats(
+            existing_stats.get("timestamp") if existing_stats else None,
+            timestamp_stats,
+        )
 
         episode_index_array = np.array(self._data_rows["episode_index"], dtype=np.int64)
-        stats_payload["episode_index"] = _compute_stats(episode_index_array.reshape(-1, 1))
+        episode_index_stats = _compute_stats(episode_index_array.reshape(-1, 1))
+        stats_payload["episode_index"] = _combine_numeric_stats(
+            existing_stats.get("episode_index") if existing_stats else None,
+            episode_index_stats,
+        )
 
         frame_index_array = np.array(self._data_rows["frame_index"], dtype=np.int64)
-        stats_payload["frame_index"] = _compute_stats(frame_index_array.reshape(-1, 1))
+        frame_index_stats = _compute_stats(frame_index_array.reshape(-1, 1))
+        stats_payload["frame_index"] = _combine_numeric_stats(
+            existing_stats.get("frame_index") if existing_stats else None,
+            frame_index_stats,
+        )
 
         action_array = np.array(self._data_rows["action"], dtype=np.float32)
-        stats_payload["action"] = _compute_stats(action_array)
+        action_stats = _compute_stats(action_array)
+        stats_payload["action"] = _combine_numeric_stats(
+            existing_stats.get("action") if existing_stats else None,
+            action_stats,
+        )
 
         task_index_array = np.array(self._data_rows["task_index"], dtype=np.int64)
-        stats_payload["task_index"] = _compute_stats(task_index_array.reshape(-1, 1))
+        task_index_stats = _compute_stats(task_index_array.reshape(-1, 1))
+        stats_payload["task_index"] = _combine_numeric_stats(
+            existing_stats.get("task_index") if existing_stats else None,
+            task_index_stats,
+        )
 
         next_reward_array = np.array(self._data_rows["next.reward"], dtype=np.float32)
-        stats_payload["next.reward"] = _compute_stats(next_reward_array.reshape(-1, 1))
+        next_reward_stats = _compute_stats(next_reward_array.reshape(-1, 1))
+        stats_payload["next.reward"] = _combine_numeric_stats(
+            existing_stats.get("next.reward") if existing_stats else None,
+            next_reward_stats,
+        )
 
-        if self._image_frame_count and self._image_min is not None and self._image_max is not None:
+        if (
+            self._image_frame_count
+            and self._image_min is not None
+            and self._image_max is not None
+        ):
             mean = self._image_sum / float(self._image_pixel_count)
             variance = self._image_sum_sq / float(self._image_pixel_count) - mean**2
             variance = np.clip(variance, 0.0, None)
             std = np.sqrt(variance)
 
-            stats_payload["observation.image"] = {
+            image_stats = {
                 "min": _to_list(self._image_min.reshape(3, 1, 1)),
                 "max": _to_list(self._image_max.reshape(3, 1, 1)),
                 "mean": _to_list(mean.reshape(3, 1, 1)),
                 "std": _to_list(std.reshape(3, 1, 1)),
                 "count": [int(self._image_frame_count)],
             }
+
+            stats_payload["observation.image"] = _combine_image_stats(
+                existing_stats.get("observation.image") if existing_stats else None,
+                image_stats,
+            )
+        elif existing_stats and "observation.image" in existing_stats:
+            stats_payload["observation.image"] = existing_stats["observation.image"]
+
+        if existing_stats:
+            for key, value in existing_stats.items():
+                if key not in stats_payload:
+                    stats_payload[key] = value
 
         with self.stats_path.open("w", encoding="utf-8") as f:
             json.dump(stats_payload, f, indent=2)
