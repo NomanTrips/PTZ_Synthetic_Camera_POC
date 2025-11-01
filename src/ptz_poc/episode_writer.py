@@ -11,6 +11,7 @@ import imageio
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pandas as pd
 
 
 DEFAULT_VIDEO_KEY = "observation.image"
@@ -569,15 +570,11 @@ class DatasetManager:
         return pa.table(arrays)
 
     def _write_tasks_table(self) -> None:
-        table = pa.table(
-            {
-                "__index_level_0__": pa.array(
-                    ["Center and zoom on the target."], type=pa.string()
-                ),
-                "task_index": pa.array([0], type=pa.int64()),
-            }
-        )
-        pq.write_table(table, self.tasks_path)
+        task_texts = ["Center and zoom on the target."]
+        task_indices = list(range(len(task_texts)))
+
+        df = pd.DataFrame({"task_index": task_indices}, index=task_texts)
+        df.to_parquet(self.tasks_path, index=True)
 
     def _write_episodes_table(self) -> None:
         if not self._episode_records:
