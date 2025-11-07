@@ -28,6 +28,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Append captured data to an existing dataset instead of starting fresh",
     )
+    parser.add_argument(
+        "--skip-noop-frames",
+        action="store_true",
+        help=(
+            "When set, omit frames from the recording if the action is effectively a no-op."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -41,6 +48,12 @@ def frame_to_surface(frame: np.ndarray) -> pygame.Surface:
 
     frame = np.transpose(frame, (1, 0, 2))
     return pygame.surfarray.make_surface(frame)
+
+
+def has_motion(action: tuple[float, float, float], eps: float = 1e-6) -> bool:
+    """Return True if any component of the action indicates motion beyond eps."""
+
+    return any(abs(component) > eps for component in action)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -112,15 +125,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             action = (command.dpan, command.dtilt, command.dzoom)
 
             if recording:
-                if episode_writer is not None:
+                should_log = True
+                if args.skip_noop_frames:
+                    should_log = frame_index == 0 or has_motion(action)
+
+                if should_log and episode_writer is not None:
                     episode_writer.append(
                         viewport,
                         frame_index=frame_index,
                         timestamp=pts_sec,
-                        state=(state_before.pan_deg, state_before.tilt_deg, state_before.zoom_norm),
+                        state=(
+                            state_before.pan_deg,
+                            state_before.tilt_deg,
+                            state_before.zoom_norm,
+                        ),
                         action=action,
                     )
-                frame_index += 1
+                    frame_index += 1
 
             rig.apply(*action)
 
