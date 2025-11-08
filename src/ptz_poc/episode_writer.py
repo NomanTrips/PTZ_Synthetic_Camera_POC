@@ -88,6 +88,7 @@ class EpisodeWriter:
     _frame_count: int = field(default=0, init=False, repr=False)
     _states: List[Tuple[float, float, float]] = field(default_factory=list, init=False, repr=False)
     _actions: List[Tuple[float, float, float]] = field(default_factory=list, init=False, repr=False)
+    _start_timestamp: float | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,11 +118,16 @@ class EpisodeWriter:
         if frame_u8.ndim != 3 or frame_u8.shape[2] != 3:
             raise ValueError("frame must have shape (H, W, 3)")
 
+        if self._start_timestamp is None:
+            self._start_timestamp = float(timestamp)
+
+        relative_timestamp = max(0.0, float(timestamp) - self._start_timestamp)
+
         self.dataset._append_frame(
             frame_u8,
             episode_index=self.episode_index,
             frame_index=frame_index,
-            timestamp=timestamp,
+            timestamp=relative_timestamp,
             state=state,
             action=action,
         )
@@ -465,6 +471,7 @@ class DatasetManager:
 
         self._data_rows["episode_index"].append(int(episode_index))
         self._data_rows["frame_index"].append(int(frame_index))
+        # ``timestamp`` is relative to the start of the episode (in seconds).
         self._data_rows["timestamp"].append(float(timestamp))
         self._data_rows["observation.state"].append(tuple(float(x) for x in state))
         self._data_rows["action"].append(tuple(float(x) for x in action))
