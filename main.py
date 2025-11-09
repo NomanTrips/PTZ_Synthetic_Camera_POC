@@ -15,6 +15,43 @@ import pygame
 from ptz_poc import DatasetManager, EpisodeWriter, HUDRenderer, InputHandler, Rig, VideoReader
 
 
+class FrameSampler:
+    """Track when frames should be logged based on a target sampling rate."""
+
+    def __init__(self, target_fps: float) -> None:
+        if target_fps <= 0:
+            raise ValueError("target_fps must be positive")
+        self._interval = 1.0 / float(target_fps)
+        self._last_logged_timestamp: float | None = None
+
+    def reset(self) -> None:
+        """Reset internal state so the next frame is logged immediately."""
+
+        self._last_logged_timestamp = None
+
+    def is_due(self, pts_sec: float) -> bool:
+        """Return ``True`` when ``pts_sec`` satisfies the sampling interval."""
+
+        if self._last_logged_timestamp is None:
+            return True
+        return (float(pts_sec) - self._last_logged_timestamp) >= self._interval - 1e-9
+
+    def mark_logged(self, pts_sec: float) -> None:
+        """Record that a frame at ``pts_sec`` was written to the dataset."""
+
+        self._last_logged_timestamp = float(pts_sec)
+
+
+def resolve_playback_fps(source_fps: float | None, target_fps: float) -> float:
+    """Return the display rate, prioritising the source FPS when available."""
+
+    if source_fps is not None and source_fps > 0:
+        return float(source_fps)
+    if target_fps <= 0:
+        raise ValueError("target_fps must be positive")
+    return float(target_fps)
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", type=Path, required=True, help="Path to the input video")
@@ -60,6 +97,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
 
     reader = VideoReader(args.video)
+    playback_fps = resolve_playback_fps(reader.info.fps, float(args.fps))
+    frame_sampler = FrameSampler(float(args.fps))
     frame_iter = iter(reader)
     try:
         full_frame, pts_sec = next(frame_iter)
@@ -120,13 +159,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                     episode_writer = dataset.create_episode_writer(episode_index)
                     recording = True
                     frame_index = 0
+                    frame_sampler.reset()
 
             state_before = rig.state
             action = (command.dpan, command.dtilt, command.dzoom)
 
             if recording:
-                should_log = True
-                if args.skip_noop_frames:
+                should_log = frame_sampler.is_due(pts_sec)
+                if should_log and args.skip_noop_frames:
                     should_log = frame_index == 0 or has_motion(action)
 
                 if should_log and episode_writer is not None:
@@ -141,6 +181,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                         ),
                         action=action,
                     )
+                    frame_sampler.mark_logged(pts_sec)
                     frame_index += 1
 
             rig.apply(*action)
@@ -148,7 +189,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             screen.fill((0, 0, 0))
             hud.draw(screen, frame_surface, state_before)
             pygame.display.flip()
-            clock.tick(args.fps)
+            clock.tick(playback_fps)
 
             try:
                 full_frame, pts_sec = next(frame_iter)
