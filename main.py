@@ -94,6 +94,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         default=0.05,
         help="Amount of zoom applied per mouse-wheel notch.",
     )
+    parser.add_argument(
+        "--log-on-motion",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When enabled, immediately log a frame whenever the action indicates motion. "
+            "Use --no-log-on-motion to keep the legacy interval-only behaviour."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -192,6 +201,13 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             if recording:
                 should_log = frame_sampler.is_due(pts_sec)
+                if (
+                    args.log_on_motion
+                    and not should_log
+                    and has_motion(action)
+                ):
+                    frame_sampler.reset()
+                    should_log = True
                 if should_log and args.skip_noop_frames:
                     should_log = frame_index == 0 or has_motion(action)
 
