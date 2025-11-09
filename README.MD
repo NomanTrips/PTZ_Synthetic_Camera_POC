@@ -59,6 +59,12 @@ python main.py --video path/to/input.mp4 --out_dir dataset_out --size 256 --fps 
 
 Then control the viewport using the keys above. When done, press **Space** to finish the episode and **Esc** to exit.
 
+Use the optional `--pan-speed`, `--tilt-speed`, and `--zoom-step` flags to tune how fast the virtual camera moves while recording (defaults match the current behaviour). For example, a slower pan/tilt with finer zoom control can be launched with:
+
+```
+python main.py --video ... --out_dir ... --pan-speed 1.0 --tilt-speed 1.0 --zoom-step 0.02
+```
+
 ---
 
 ## Output Structure
