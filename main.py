@@ -72,6 +72,28 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "When set, omit frames from the recording if the action is effectively a no-op."
         ),
     )
+    parser.add_argument(
+        "--pan-speed",
+        type=float,
+        default=2.5,
+        help=(
+            "Multiplier applied to horizontal inputs; higher values move the camera faster."
+        ),
+    )
+    parser.add_argument(
+        "--tilt-speed",
+        type=float,
+        default=2.5,
+        help=(
+            "Multiplier applied to vertical inputs; higher values move the camera faster."
+        ),
+    )
+    parser.add_argument(
+        "--zoom-step",
+        type=float,
+        default=0.05,
+        help="Amount of zoom applied per mouse-wheel notch.",
+    )
     return parser.parse_args(argv)
 
 
@@ -115,7 +137,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         pygame.display.set_caption("PTZ Synthetic Camera POC")
 
         rig = Rig(fov_x_deg=80.0, fov_y_deg=60.0, output_size=(args.size, args.size))
-        input_handler = InputHandler(pan_speed=2.5, tilt_speed=2.5, zoom_step=0.05)
+        input_handler = InputHandler(
+            pan_speed=args.pan_speed,
+            tilt_speed=args.tilt_speed,
+            zoom_step=args.zoom_step,
+        )
         hud = HUDRenderer(window_size)
 
         dataset = DatasetManager(args.out_dir, fps=args.fps, append=args.append)
