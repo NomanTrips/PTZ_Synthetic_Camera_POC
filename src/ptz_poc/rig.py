@@ -32,6 +32,7 @@ class Rig:
         tilt_limits: Tuple[float, float] | None = None,
         zoom_limits: Tuple[float, float] = (0.0, 1.0),
         max_deltas: Tuple[float, float, float] = (5.0, 5.0, 0.1),
+        fit_longest_side: bool = False,
     ) -> None:
         if fov_x_deg <= 0:
             raise ValueError("fov_x_deg must be positive")
@@ -46,6 +47,7 @@ class Rig:
         self.fov_y_deg = float(fov_y_deg)
         self.output_height, self.output_width = output_size
         self.zoom_alpha = float(zoom_alpha)
+        self.fit_longest_side = bool(fit_longest_side)
 
         self.pan_limits = pan_limits or (-self.fov_x_deg / 2.0, self.fov_x_deg / 2.0)
         self.tilt_limits = tilt_limits or (-self.fov_y_deg / 2.0, self.fov_y_deg / 2.0)
@@ -102,10 +104,13 @@ class Rig:
         h_full, w_full, _ = frame.shape
         aspect = self.output_width / self.output_height
 
-        base_width = min(w_full, h_full * aspect)
+        if self.fit_longest_side:
+            base_width = float(w_full)
+        else:
+            base_width = min(w_full, h_full * aspect)
         viewport_width = max(1.0, base_width * float(np.exp(-self.zoom_alpha * self._state.zoom_norm)))
         viewport_height = max(1.0, viewport_width / aspect)
-        if viewport_height > h_full:
+        if not self.fit_longest_side and viewport_height > h_full:
             viewport_height = float(h_full)
             viewport_width = viewport_height * aspect
 
@@ -118,8 +123,11 @@ class Rig:
         center_x = (w_full / 2.0) + (self._state.pan_deg * pixels_per_deg_x)
         center_y = (h_full / 2.0) - (self._state.tilt_deg * pixels_per_deg_y)
 
-        center_x = self._clamp(center_x, half_w, w_full - half_w)
-        center_y = self._clamp(center_y, half_h, h_full - half_h)
+        clamp_half_w = min(half_w, w_full / 2.0) if self.fit_longest_side else half_w
+        clamp_half_h = min(half_h, h_full / 2.0) if self.fit_longest_side else half_h
+
+        center_x = self._clamp(center_x, clamp_half_w, w_full - clamp_half_w)
+        center_y = self._clamp(center_y, clamp_half_h, h_full - clamp_half_h)
 
         width_int = max(1, int(round(viewport_width)))
         height_int = max(1, int(round(viewport_height)))
@@ -127,15 +135,33 @@ class Rig:
         left = int(round(center_x)) - width_int // 2
         top = int(round(center_y)) - height_int // 2
 
-        left = int(self._clamp(left, 0, max(0, w_full - width_int)))
-        top = int(self._clamp(top, 0, max(0, h_full - height_int)))
+        if not self.fit_longest_side:
+            left = int(self._clamp(left, 0, max(0, w_full - width_int)))
+            top = int(self._clamp(top, 0, max(0, h_full - height_int)))
 
         right = left + width_int
         bottom = top + height_int
 
-        crop = frame[top:bottom, left:right]
+        crop_left = max(left, 0)
+        crop_top = max(top, 0)
+        crop_right = min(right, w_full)
+        crop_bottom = min(bottom, h_full)
+
+        crop = frame[crop_top:crop_bottom, crop_left:crop_right]
         if crop.size == 0:
             raise RuntimeError("Viewport crop is empty; check rig configuration")
+
+        pad_left = max(0, -left)
+        pad_top = max(0, -top)
+        pad_right = max(0, right - w_full)
+        pad_bottom = max(0, bottom - h_full)
+
+        if any(pad > 0 for pad in (pad_left, pad_right, pad_top, pad_bottom)):
+            crop = np.pad(
+                crop,
+                ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)),
+                mode="constant",
+            )
 
         resized = cv2.resize(crop, (self.output_width, self.output_height), interpolation=cv2.INTER_LINEAR)
         return resized
