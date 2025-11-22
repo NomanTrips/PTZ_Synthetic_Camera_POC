@@ -26,6 +26,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--size", type=int, default=256, help="Output viewport edge length in pixels")
     parser.add_argument("--fov_x", type=float, default=60.0, help="Horizontal field-of-view in degrees")
     parser.add_argument("--fov_y", type=float, default=40.0, help="Vertical field-of-view in degrees")
+    parser.add_argument(
+        "--fit-longest-side",
+        action="store_true",
+        help="Fit the viewport to the video's longest side with letterboxing at default zoom",
+    )
     return parser.parse_args(argv)
 
 
@@ -54,6 +59,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         fov_x_deg=args.fov_x,
         fov_y_deg=args.fov_y,
         output_size=(args.size, args.size),
+        fit_longest_side=args.fit_longest_side,
     )
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
