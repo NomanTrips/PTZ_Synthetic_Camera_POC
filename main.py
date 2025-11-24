@@ -103,6 +103,15 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Use --no-log-on-motion to keep the legacy interval-only behaviour."
         ),
     )
+    parser.add_argument(
+        "--viewport-position",
+        choices=("center", "left", "right"),
+        default="center",
+        help=(
+            "Initial horizontal viewport placement on the input video. "
+            "Defaults to the center."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -146,6 +155,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         pygame.display.set_caption("PTZ Synthetic Camera POC")
 
         rig = Rig(fov_x_deg=80.0, fov_y_deg=60.0, output_size=(args.size, args.size))
+        if args.viewport_position == "center":
+            initial_pan = 0.0
+        elif args.viewport_position == "left":
+            initial_pan = rig.pan_limits[0]
+        else:
+            initial_pan = rig.pan_limits[1]
+        rig.reset(pan_deg=initial_pan)
         input_handler = InputHandler(
             pan_speed=args.pan_speed,
             tilt_speed=args.tilt_speed,
