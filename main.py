@@ -103,14 +103,6 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
             "Use --no-log-on-motion to keep the legacy interval-only behaviour."
         ),
     )
-    parser.add_argument(
-        "--fit-longest-side",
-        action="store_true",
-        help=(
-            "Fit the viewport to the video's longest side with letterboxing so wide content "
-            "is fully visible at the default zoom."
-        ),
-    )
     return parser.parse_args(argv)
 
 
@@ -153,12 +145,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         screen = pygame.display.set_mode(window_size)
         pygame.display.set_caption("PTZ Synthetic Camera POC")
 
-        rig = Rig(
-            fov_x_deg=80.0,
-            fov_y_deg=60.0,
-            output_size=(args.size, args.size),
-            fit_longest_side=args.fit_longest_side,
-        )
+        rig = Rig(fov_x_deg=80.0, fov_y_deg=60.0, output_size=(args.size, args.size))
         input_handler = InputHandler(
             pan_speed=args.pan_speed,
             tilt_speed=args.tilt_speed,
