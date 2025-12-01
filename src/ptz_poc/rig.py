@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Literal, Tuple
 
 import cv2
 import numpy as np
@@ -11,7 +11,11 @@ import numpy as np
 
 @dataclass
 class RigState:
-    """Simple container representing the rig's pose."""
+    """Simple container representing the rig's pose.
+
+    The planar ``x``/``y`` offsets use the rig's configured ``position_basis``
+    (pixels, degrees, or normalized units relative to frame size).
+    """
 
     pan_deg: float
     tilt_deg: float
@@ -23,7 +27,13 @@ class RigState:
 
 
 class Rig:
-    """Virtual pan/tilt/zoom camera that renders cropped viewports."""
+    """Virtual pan/tilt/zoom camera that renders cropped viewports.
+
+    The rig tracks both angular orientation (pan/tilt/yaw/pitch) and planar
+    translation relative to the input frame's centre. The planar offsets can be
+    expressed in pixels, degrees, or normalized units to match downstream
+    control schemes.
+    """
 
     def __init__(
         self,
@@ -36,8 +46,9 @@ class Rig:
         tilt_limits: Tuple[float, float] | None = None,
         zoom_limits: Tuple[float, float] = (0.0, 1.0),
         max_deltas: Tuple[float, float, float] = (5.0, 5.0, 0.1),
-        position_limits: Tuple[float, float] = (-0.5, 0.5),
-        position_speed: float = 0.02,
+        position_limits: Tuple[float, float] | None = None,
+        position_speed: float = 12.0,
+        position_basis: Literal["pixels", "degrees", "normalized"] = "pixels",
         yaw_sensitivity: float = 0.1,
         pitch_sensitivity: float = 0.1,
     ) -> None:
@@ -49,10 +60,12 @@ class Rig:
             raise ValueError("output_size must be positive")
         if zoom_alpha <= 0:
             raise ValueError("zoom_alpha must be positive")
-        if position_limits[0] >= position_limits[1]:
+        if position_limits is not None and position_limits[0] >= position_limits[1]:
             raise ValueError("position_limits must be an ordered (min, max) tuple")
         if position_speed < 0:
             raise ValueError("position_speed must be non-negative")
+        if position_basis not in {"pixels", "degrees", "normalized"}:
+            raise ValueError("position_basis must be one of: pixels, degrees, normalized")
         if yaw_sensitivity < 0 or pitch_sensitivity < 0:
             raise ValueError("angular sensitivities must be non-negative")
 
@@ -65,8 +78,9 @@ class Rig:
         self.tilt_limits = tilt_limits or (-self.fov_y_deg / 2.0, self.fov_y_deg / 2.0)
         self.zoom_limits = zoom_limits
         self.max_deltas = max_deltas
-        self.position_limits = position_limits
+        self.position_limits = position_limits or (-float("inf"), float("inf"))
         self.position_speed = float(position_speed)
+        self.position_basis = position_basis
         self.yaw_sensitivity = float(yaw_sensitivity)
         self.pitch_sensitivity = float(pitch_sensitivity)
 
@@ -182,11 +196,38 @@ class Rig:
         pixels_per_deg_x = w_full / self.fov_x_deg
         pixels_per_deg_y = h_full / self.fov_y_deg
 
-        center_x = (w_full / 2.0) + (self._state.pan_deg * pixels_per_deg_x) + (self._state.x * w_full)
-        center_y = (h_full / 2.0) - (self._state.tilt_deg * pixels_per_deg_y) + (self._state.y * h_full)
+        pan_offset_px = self._state.pan_deg * pixels_per_deg_x
+        tilt_offset_px = self._state.tilt_deg * pixels_per_deg_y
 
-        center_x = self._clamp(center_x, half_w, w_full - half_w)
-        center_y = self._clamp(center_y, half_h, h_full - half_h)
+        base_center_x = (w_full / 2.0) + pan_offset_px
+        base_center_y = (h_full / 2.0) - tilt_offset_px
+
+        planar_dx_px, planar_dy_px = self._position_offsets_px(
+            w_full, h_full, pixels_per_deg_x, pixels_per_deg_y
+        )
+
+        planar_dx_px = self._clamp(
+            planar_dx_px,
+            half_w - base_center_x,
+            (w_full - half_w) - base_center_x,
+        )
+        planar_dy_px = self._clamp(
+            planar_dy_px,
+            half_h - base_center_y,
+            (h_full - half_h) - base_center_y,
+        )
+
+        center_x = base_center_x + planar_dx_px
+        center_y = base_center_y + planar_dy_px
+
+        self._update_planar_state_from_pixels(
+            planar_dx_px,
+            planar_dy_px,
+            w_full,
+            h_full,
+            pixels_per_deg_x,
+            pixels_per_deg_y,
+        )
 
         width_int = max(1, int(round(viewport_width)))
         height_int = max(1, int(round(viewport_height)))
@@ -210,6 +251,50 @@ class Rig:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _position_offsets_px(
+        self,
+        width: float,
+        height: float,
+        pixels_per_deg_x: float,
+        pixels_per_deg_y: float,
+    ) -> Tuple[float, float]:
+        if self.position_basis == "pixels":
+            return float(self._state.x), float(self._state.y)
+        if self.position_basis == "degrees":
+            return (
+                float(self._state.x * pixels_per_deg_x),
+                float(self._state.y * pixels_per_deg_y),
+            )
+        return float(self._state.x * width), float(self._state.y * height)
+
+    def _update_planar_state_from_pixels(
+        self,
+        dx_px: float,
+        dy_px: float,
+        width: float,
+        height: float,
+        pixels_per_deg_x: float,
+        pixels_per_deg_y: float,
+    ) -> None:
+        if self.position_basis == "pixels":
+            x_units, y_units = dx_px, dy_px
+        elif self.position_basis == "degrees":
+            x_units = dx_px / pixels_per_deg_x
+            y_units = dy_px / pixels_per_deg_y
+        else:
+            x_units = dx_px / width
+            y_units = dy_px / height
+
+        self._state = RigState(
+            pan_deg=self._state.pan_deg,
+            tilt_deg=self._state.tilt_deg,
+            zoom_norm=self._state.zoom_norm,
+            x=float(x_units),
+            y=float(y_units),
+            yaw_deg=self._state.yaw_deg,
+            pitch_deg=self._state.pitch_deg,
+        )
+
     @staticmethod
     def _clamp(value: float, min_value: float, max_value: float) -> float:
         return float(np.clip(value, min_value, max_value))

@@ -31,6 +31,29 @@ This is a minimal proof-of-concept project for creating a **synthetic pan-tilt-z
 
 ---
 
+## Movement model and units
+
+The rig combines angular orientation (pan/tilt) with planar translation when
+placing the viewport on the source frame:
+
+* **Pan / Tilt** are measured in degrees around the frame centre. Positive pan
+  moves the viewport right; positive tilt moves it up.
+* **Planar position** (`x`, `y`) uses a centre-origin basis that can be
+  expressed in **pixels** (default), **degrees** (converted using the rig FOV),
+  or **normalized** units. The values shown in the HUD and stored in the
+  dataset use this basis directly.
+* **FPS-style movement** (enabled with `--fps-controls`) integrates WASD input
+  into the planar position using `position_speed` units per tick. Mouse motion
+  adjusts yaw/pitch for movement; pan/tilt still control the viewport itself.
+
+Translation is clamped each render so the cropped viewport always stays inside
+the frame, respecting the current zoom level and pan/tilt orientation. Zooming
+only scales the viewport size (via the exponential `zoom_norm` curve) and does
+not rescale the translation units, but because the viewport is smaller more
+translation becomes available before hitting the frame bounds.
+
+---
+
 ## Requirements
 
 ```
