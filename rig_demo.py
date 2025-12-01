@@ -29,15 +29,15 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def generate_sample_actions() -> List[tuple[float, float, float]]:
-    """Return a handful of pan/tilt/zoom deltas for demonstration purposes."""
+def generate_sample_actions() -> List[tuple[float, float, float, float, float, float, float]]:
+    """Return a handful of pan/tilt/zoom/pose deltas for demonstration purposes."""
 
     return [
-        (0.0, 0.0, 0.0),
-        (10.0, 0.0, 0.0),
-        (-20.0, 5.0, 0.1),
-        (15.0, -10.0, 0.2),
-        (0.0, 10.0, -0.15),
+        (0.0, 0.0, 0.0, 0.02, 0.0, 15.0, 0.0),
+        (10.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0),
+        (-20.0, 5.0, 0.1, 0.01, -0.01, -10.0, 2.5),
+        (15.0, -10.0, 0.2, -0.02, 0.0, 0.0, -2.5),
+        (0.0, 10.0, -0.15, 0.0, 0.0, 20.0, 0.0),
     ]
 
 
@@ -61,13 +61,25 @@ def main(argv: Iterable[str] | None = None) -> int:
     rig.reset()
     imageio.imwrite(args.out_dir / "frame_000.png", rig.render(frame))
 
-    for index, (dpan, dtilt, dzoom) in enumerate(generate_sample_actions(), start=1):
-        state = rig.apply(dpan, dtilt, dzoom)
+    for index, (dpan, dtilt, dzoom, forward, strafe, dyaw, dpitch) in enumerate(
+        generate_sample_actions(), start=1
+    ):
+        state = rig.apply(dpan, dtilt, dzoom, forward, strafe, dyaw, dpitch)
         viewport = rig.render(frame)
         output_path = args.out_dir / f"frame_{index:03d}.png"
         imageio.imwrite(output_path, viewport)
         print(
-            f"Frame {index:03d}: pan={state.pan_deg:.2f}°, tilt={state.tilt_deg:.2f}°, zoom={state.zoom_norm:.2f} → {output_path}"
+            "Frame {idx:03d}: pan={pan:.2f}°, tilt={tilt:.2f}°, yaw={yaw:.2f}°, "
+            "pos=({x:+.3f}, {y:+.3f}), zoom={zoom:.2f} → {path}".format(
+                idx=index,
+                pan=state.pan_deg,
+                tilt=state.tilt_deg,
+                yaw=state.yaw_deg,
+                x=state.x,
+                y=state.y,
+                zoom=state.zoom_norm,
+                path=output_path,
+            )
         )
 
     return 0

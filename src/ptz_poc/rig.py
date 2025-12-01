@@ -16,6 +16,10 @@ class RigState:
     pan_deg: float
     tilt_deg: float
     zoom_norm: float
+    x: float = 0.0
+    y: float = 0.0
+    yaw_deg: float = 0.0
+    pitch_deg: float = 0.0
 
 
 class Rig:
@@ -32,6 +36,10 @@ class Rig:
         tilt_limits: Tuple[float, float] | None = None,
         zoom_limits: Tuple[float, float] = (0.0, 1.0),
         max_deltas: Tuple[float, float, float] = (5.0, 5.0, 0.1),
+        position_limits: Tuple[float, float] = (-0.5, 0.5),
+        position_speed: float = 0.02,
+        yaw_sensitivity: float = 0.1,
+        pitch_sensitivity: float = 0.1,
     ) -> None:
         if fov_x_deg <= 0:
             raise ValueError("fov_x_deg must be positive")
@@ -41,6 +49,12 @@ class Rig:
             raise ValueError("output_size must be positive")
         if zoom_alpha <= 0:
             raise ValueError("zoom_alpha must be positive")
+        if position_limits[0] >= position_limits[1]:
+            raise ValueError("position_limits must be an ordered (min, max) tuple")
+        if position_speed < 0:
+            raise ValueError("position_speed must be non-negative")
+        if yaw_sensitivity < 0 or pitch_sensitivity < 0:
+            raise ValueError("angular sensitivities must be non-negative")
 
         self.fov_x_deg = float(fov_x_deg)
         self.fov_y_deg = float(fov_y_deg)
@@ -51,8 +65,16 @@ class Rig:
         self.tilt_limits = tilt_limits or (-self.fov_y_deg / 2.0, self.fov_y_deg / 2.0)
         self.zoom_limits = zoom_limits
         self.max_deltas = max_deltas
+        self.position_limits = position_limits
+        self.position_speed = float(position_speed)
+        self.yaw_sensitivity = float(yaw_sensitivity)
+        self.pitch_sensitivity = float(pitch_sensitivity)
 
-        self._state = RigState(pan_deg=0.0, tilt_deg=0.0, zoom_norm=float(np.clip(0.0, *self.zoom_limits)))
+        self._state = RigState(
+            pan_deg=0.0,
+            tilt_deg=0.0,
+            zoom_norm=float(np.clip(0.0, *self.zoom_limits)),
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -63,18 +85,45 @@ class Rig:
             pan_deg=self._state.pan_deg,
             tilt_deg=self._state.tilt_deg,
             zoom_norm=self._state.zoom_norm,
+            x=self._state.x,
+            y=self._state.y,
+            yaw_deg=self._state.yaw_deg,
+            pitch_deg=self._state.pitch_deg,
         )
 
-    def reset(self, *, pan_deg: float = 0.0, tilt_deg: float = 0.0, zoom_norm: float = 0.0) -> None:
+    def reset(
+        self,
+        *,
+        pan_deg: float = 0.0,
+        tilt_deg: float = 0.0,
+        zoom_norm: float = 0.0,
+        x: float = 0.0,
+        y: float = 0.0,
+        yaw_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+    ) -> None:
         """Reset the rig pose to the provided values."""
 
         self._state = RigState(
             pan_deg=self._clamp(pan_deg, *self.pan_limits),
             tilt_deg=self._clamp(tilt_deg, *self.tilt_limits),
             zoom_norm=self._clamp(zoom_norm, *self.zoom_limits),
+            x=self._clamp(x, *self.position_limits),
+            y=self._clamp(y, *self.position_limits),
+            yaw_deg=self._wrap_angle(yaw_deg),
+            pitch_deg=self._clamp(pitch_deg, -89.9, 89.9),
         )
 
-    def apply(self, dpan: float, dtilt: float, dzoom: float) -> RigState:
+    def apply(
+        self,
+        dpan: float,
+        dtilt: float,
+        dzoom: float,
+        forward: float = 0.0,
+        strafe: float = 0.0,
+        dyaw: float = 0.0,
+        dpitch: float = 0.0,
+    ) -> RigState:
         """Apply incremental deltas to the current pose."""
 
         max_dpan, max_dtilt, max_dzoom = self.max_deltas
@@ -86,7 +135,25 @@ class Rig:
         tilt = self._clamp(self._state.tilt_deg + dtilt, *self.tilt_limits)
         zoom = self._clamp(self._state.zoom_norm + dzoom, *self.zoom_limits)
 
-        self._state = RigState(pan_deg=pan, tilt_deg=tilt, zoom_norm=zoom)
+        yaw = self._wrap_angle(self._state.yaw_deg + dyaw * self.yaw_sensitivity)
+        pitch = self._clamp(self._state.pitch_deg + dpitch * self.pitch_sensitivity, -89.9, 89.9)
+
+        yaw_rad = np.deg2rad(yaw)
+        dx = (forward * np.sin(yaw_rad) + strafe * np.cos(yaw_rad)) * self.position_speed
+        dy = (forward * np.cos(yaw_rad) - strafe * np.sin(yaw_rad)) * self.position_speed
+
+        x = self._clamp(self._state.x + dx, *self.position_limits)
+        y = self._clamp(self._state.y + dy, *self.position_limits)
+
+        self._state = RigState(
+            pan_deg=pan,
+            tilt_deg=tilt,
+            zoom_norm=zoom,
+            x=x,
+            y=y,
+            yaw_deg=yaw,
+            pitch_deg=pitch,
+        )
         return self.state
 
     def render(self, full_frame: np.ndarray) -> np.ndarray:
@@ -115,8 +182,8 @@ class Rig:
         pixels_per_deg_x = w_full / self.fov_x_deg
         pixels_per_deg_y = h_full / self.fov_y_deg
 
-        center_x = (w_full / 2.0) + (self._state.pan_deg * pixels_per_deg_x)
-        center_y = (h_full / 2.0) - (self._state.tilt_deg * pixels_per_deg_y)
+        center_x = (w_full / 2.0) + (self._state.pan_deg * pixels_per_deg_x) + (self._state.x * w_full)
+        center_y = (h_full / 2.0) - (self._state.tilt_deg * pixels_per_deg_y) + (self._state.y * h_full)
 
         center_x = self._clamp(center_x, half_w, w_full - half_w)
         center_y = self._clamp(center_y, half_h, h_full - half_h)
@@ -146,4 +213,9 @@ class Rig:
     @staticmethod
     def _clamp(value: float, min_value: float, max_value: float) -> float:
         return float(np.clip(value, min_value, max_value))
+
+    @staticmethod
+    def _wrap_angle(angle_deg: float) -> float:
+        wrapped = (float(angle_deg) + 180.0) % 360.0 - 180.0
+        return wrapped
 

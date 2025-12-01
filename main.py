@@ -135,7 +135,7 @@ def frame_to_surface(frame: np.ndarray) -> pygame.Surface:
     return pygame.surfarray.make_surface(frame)
 
 
-def has_motion(action: tuple[float, float, float], eps: float = 1e-6) -> bool:
+def has_motion(action: tuple[float, ...], eps: float = 1e-6) -> bool:
     """Return True if any component of the action indicates motion beyond eps."""
 
     return any(abs(component) > eps for component in action)
@@ -222,7 +222,15 @@ def main(argv: Optional[list[str]] = None) -> int:
                     frame_sampler.reset()
 
             state_before = rig.state
-            action = (command.dpan, command.dtilt, command.dzoom)
+            action = (
+                command.dpan,
+                command.dtilt,
+                command.dzoom,
+                command.forward,
+                command.strafe,
+                command.dyaw,
+                command.dpitch,
+            )
 
             if recording:
                 should_log = frame_sampler.is_due(pts_sec)
@@ -245,6 +253,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                             state_before.pan_deg,
                             state_before.tilt_deg,
                             state_before.zoom_norm,
+                            state_before.x,
+                            state_before.y,
+                            state_before.yaw_deg,
+                            state_before.pitch_deg,
                         ),
                         action=action,
                     )

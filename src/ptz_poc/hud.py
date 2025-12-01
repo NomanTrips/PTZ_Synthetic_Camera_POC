@@ -72,16 +72,25 @@ class HUDRenderer:
         )
 
     def _draw_state_text(self, screen: pygame.Surface, state: RigState) -> None:
-        text = f"PAN {state.pan_deg:+06.2f}°   TILT {state.tilt_deg:+06.2f}°   ZOOM {state.zoom_norm:0.2f}"
-        text_surface = self.font.render(text, True, self.style.text_color)
+        lines = [
+            "PAN {:+06.2f}°  TILT {:+06.2f}°  YAW {:+06.2f}°  PITCH {:+06.2f}°".format(
+                state.pan_deg, state.tilt_deg, state.yaw_deg, state.pitch_deg
+            ),
+            "X {:+06.3f}  Y {:+06.3f}  ZOOM {:0.2f}".format(state.x, state.y, state.zoom_norm),
+        ]
 
         padding = self.style.text_padding
-        padded_surface = pygame.Surface(
-            (text_surface.get_width() + padding * 2, text_surface.get_height() + padding * 2),
-            pygame.SRCALPHA,
-        )
+        text_surfaces = [self.font.render(line, True, self.style.text_color) for line in lines]
+        width = max(surface.get_width() for surface in text_surfaces) + padding * 2
+        height = sum(surface.get_height() for surface in text_surfaces) + padding * (len(text_surfaces) + 1)
+
+        padded_surface = pygame.Surface((width, height), pygame.SRCALPHA)
         padded_surface.fill(self.style.text_bg_color)
-        padded_surface.blit(text_surface, (padding, padding))
+
+        y_cursor = padding
+        for surface in text_surfaces:
+            padded_surface.blit(surface, (padding, y_cursor))
+            y_cursor += surface.get_height() + padding
 
         x = padding
         y = self.window_height - padded_surface.get_height() - padding

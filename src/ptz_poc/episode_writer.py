@@ -50,14 +50,34 @@ def _metadata_template(*, fps: int, chunk_size: int, video_key: str) -> Dict[str
             },
             "observation.state": {
                 "dtype": "float32",
-                "shape": [3],
-                "names": {"motors": ["pan", "tilt", "zoom"]},
+                "shape": [7],
+                "names": {
+                    "pose": [
+                        "pan_deg",
+                        "tilt_deg",
+                        "zoom_norm",
+                        "x",
+                        "y",
+                        "yaw_deg",
+                        "pitch_deg",
+                    ]
+                },
                 "fps": non_video_feature_fps,
             },
             "action": {
                 "dtype": "float32",
-                "shape": [3],
-                "names": {"motors": ["dpan", "dtilt", "dzoom"]},
+                "shape": [7],
+                "names": {
+                    "pose_deltas": [
+                        "dpan",
+                        "dtilt",
+                        "dzoom",
+                        "forward",
+                        "strafe",
+                        "dyaw",
+                        "dpitch",
+                    ]
+                },
                 "fps": non_video_feature_fps,
             },
             "episode_index": {"dtype": "int64", "shape": [1], "fps": non_video_feature_fps},
@@ -86,8 +106,8 @@ class EpisodeWriter:
 
     _closed: bool = field(default=False, init=False, repr=False)
     _frame_count: int = field(default=0, init=False, repr=False)
-    _states: List[Tuple[float, float, float]] = field(default_factory=list, init=False, repr=False)
-    _actions: List[Tuple[float, float, float]] = field(default_factory=list, init=False, repr=False)
+    _states: List[Tuple[float, ...]] = field(default_factory=list, init=False, repr=False)
+    _actions: List[Tuple[float, ...]] = field(default_factory=list, init=False, repr=False)
     _start_timestamp: float | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -104,8 +124,8 @@ class EpisodeWriter:
         *,
         frame_index: int,
         timestamp: float,
-        state: Tuple[float, float, float],
-        action: Tuple[float, float, float],
+        state: Tuple[float, ...],
+        action: Tuple[float, ...],
     ) -> None:
         """Append a single observation/action pair to the episode."""
 
@@ -490,8 +510,8 @@ class DatasetManager:
         episode_index: int,
         frame_count: int,
         dataset_from_index: int,
-        states: List[Tuple[float, float, float]],
-        actions: List[Tuple[float, float, float]],
+        states: List[Tuple[float, ...]],
+        actions: List[Tuple[float, ...]],
     ) -> None:
         dataset_to_index = dataset_from_index + frame_count
         video_from_timestamp = dataset_from_index / float(self.fps)
