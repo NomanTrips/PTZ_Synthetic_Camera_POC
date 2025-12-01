@@ -73,6 +73,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--fps-controls",
+        "--wasd-mode",
+        action="store_true",
+        help=(
+            "Enable FPS-style controls: WASD for forward/strafe and mouse for yaw/pitch."
+        ),
+    )
+    parser.add_argument(
         "--pan-speed",
         type=float,
         default=2.5,
@@ -166,6 +174,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             pan_speed=args.pan_speed,
             tilt_speed=args.tilt_speed,
             zoom_step=args.zoom_step,
+            fps_controls=args.fps_controls,
         )
         hud = HUDRenderer(window_size)
 
