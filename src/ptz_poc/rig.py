@@ -133,8 +133,6 @@ class Rig:
         dpan: float,
         dtilt: float,
         dzoom: float,
-        forward: float = 0.0,
-        strafe: float = 0.0,
         dyaw: float = 0.0,
         dpitch: float = 0.0,
     ) -> RigState:
@@ -152,12 +150,8 @@ class Rig:
         yaw = self._wrap_angle(self._state.yaw_deg + dyaw * self.yaw_sensitivity)
         pitch = self._clamp(self._state.pitch_deg + dpitch * self.pitch_sensitivity, -89.9, 89.9)
 
-        yaw_rad = np.deg2rad(yaw)
-        dx = (forward * np.sin(yaw_rad) + strafe * np.cos(yaw_rad)) * self.position_speed
-        dy = (forward * np.cos(yaw_rad) - strafe * np.sin(yaw_rad)) * self.position_speed
-
-        x = self._clamp(self._state.x + dx, *self.position_limits)
-        y = self._clamp(self._state.y + dy, *self.position_limits)
+        x = self._state.x
+        y = self._state.y
 
         self._state = RigState(
             pan_deg=pan,

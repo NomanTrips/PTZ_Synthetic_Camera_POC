@@ -77,7 +77,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--wasd-mode",
         action="store_true",
         help=(
-            "Enable FPS-style controls: WASD for forward/strafe and mouse for yaw/pitch."
+            "Enable FPS-style controls: W/S to dolly zoom and mouse for yaw/pitch."
         ),
     )
     parser.add_argument(
@@ -226,8 +226,6 @@ def main(argv: Optional[list[str]] = None) -> int:
                 command.dpan,
                 command.dtilt,
                 command.dzoom,
-                command.forward,
-                command.strafe,
                 command.dyaw,
                 command.dpitch,
             )

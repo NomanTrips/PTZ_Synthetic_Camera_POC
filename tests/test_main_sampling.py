@@ -47,6 +47,8 @@ class _StubInputHandler:
             dpan=0.0,
             dtilt=0.0,
             dzoom=0.0,
+            dyaw=0.0,
+            dpitch=0.0,
         )
 
 
@@ -150,7 +152,7 @@ def test_sampling_respects_source_playback_and_target_rate(
             frame_index=frame_index,
             timestamp=pts,
             state=(0.0, 0.0, 0.0),
-            action=(0.0, 0.0, 0.0),
+            action=(0.0, 0.0, 0.0, 0.0, 0.0),
         )
 
     assert writer.close() == expected_frames

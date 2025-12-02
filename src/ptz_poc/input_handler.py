@@ -14,8 +14,6 @@ class InputCommand:
     dpan: float = 0.0
     dtilt: float = 0.0
     dzoom: float = 0.0
-    forward: float = 0.0
-    strafe: float = 0.0
     dyaw: float = 0.0
     dpitch: float = 0.0
     toggle_recording: bool = False
@@ -31,14 +29,18 @@ class InputHandler:
         pan_speed: float = 2.0,
         tilt_speed: float = 2.0,
         zoom_step: float = 0.1,
+        fps_zoom_speed: float | None = None,
         fps_controls: bool = False,
     ) -> None:
         if pan_speed < 0 or tilt_speed < 0 or zoom_step <= 0:
             raise ValueError("Input speed parameters must be non-negative")
+        if fps_zoom_speed is not None and fps_zoom_speed <= 0:
+            raise ValueError("fps_zoom_speed must be positive when provided")
 
         self.pan_speed = float(pan_speed)
         self.tilt_speed = float(tilt_speed)
         self.zoom_step = float(zoom_step)
+        self.fps_zoom_speed = float(fps_zoom_speed) if fps_zoom_speed is not None else self.zoom_step
         self.fps_controls = bool(fps_controls)
         self._pending_zoom_delta = 0.0
 
@@ -66,13 +68,9 @@ class InputHandler:
 
         if self.fps_controls:
             if pressed[pygame.K_w]:
-                command.forward += 1.0
+                command.dzoom += self.fps_zoom_speed
             if pressed[pygame.K_s]:
-                command.forward -= 1.0
-            if pressed[pygame.K_a]:
-                command.strafe -= 1.0
-            if pressed[pygame.K_d]:
-                command.strafe += 1.0
+                command.dzoom -= self.fps_zoom_speed
         else:
             if pressed[pygame.K_a]:
                 command.dpan -= self.pan_speed

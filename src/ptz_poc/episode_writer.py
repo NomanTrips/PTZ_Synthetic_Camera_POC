@@ -66,14 +66,12 @@ def _metadata_template(*, fps: int, chunk_size: int, video_key: str) -> Dict[str
             },
             "action": {
                 "dtype": "float32",
-                "shape": [7],
+                "shape": [5],
                 "names": {
                     "pose_deltas": [
                         "dpan",
                         "dtilt",
                         "dzoom",
-                        "forward",
-                        "strafe",
                         "dyaw",
                         "dpitch",
                     ]
@@ -465,7 +463,7 @@ class DatasetManager:
         frame_index: int,
         timestamp: float,
         state: Tuple[float, float, float],
-        action: Tuple[float, float, float],
+        action: Tuple[float, float, float, float, float],
     ) -> None:
         writer = self._ensure_video_writer()
         writer.append_data(frame)
@@ -575,17 +573,20 @@ class DatasetManager:
         states = np.asarray(self._data_rows["observation.state"], dtype=np.float32)
         actions = np.asarray(self._data_rows["action"], dtype=np.float32)
 
+        state_width = int(states.shape[1] if states.ndim > 1 else states.size)
+        action_width = int(actions.shape[1] if actions.ndim > 1 else actions.size)
+
         arrays = {
             "episode_index": pa.array(self._data_rows["episode_index"], type=pa.int64()),
             "frame_index": pa.array(self._data_rows["frame_index"], type=pa.int64()),
             "timestamp": pa.array(self._data_rows["timestamp"], type=pa.float32()),
             "observation.state": pa.FixedSizeListArray.from_arrays(
                 pa.array(states.reshape(-1), type=pa.float32()),
-                3,
+                state_width,
             ),
             "action": pa.FixedSizeListArray.from_arrays(
                 pa.array(actions.reshape(-1), type=pa.float32()),
-                3,
+                action_width,
             ),
             "task_index": pa.array(self._data_rows["task_index"], type=pa.int64()),
             "next.reward": pa.array(self._data_rows["next.reward"], type=pa.float32()),
