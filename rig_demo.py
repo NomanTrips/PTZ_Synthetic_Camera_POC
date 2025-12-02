@@ -29,15 +29,15 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def generate_sample_actions() -> List[tuple[float, float, float, float, float, float, float]]:
+def generate_sample_actions() -> List[tuple[float, float, float, float, float]]:
     """Return a handful of pan/tilt/zoom/pose deltas for demonstration purposes."""
 
     return [
-        (0.0, 0.0, 0.0, 0.02, 0.0, 15.0, 0.0),
-        (10.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0),
-        (-20.0, 5.0, 0.1, 0.01, -0.01, -10.0, 2.5),
-        (15.0, -10.0, 0.2, -0.02, 0.0, 0.0, -2.5),
-        (0.0, 10.0, -0.15, 0.0, 0.0, 20.0, 0.0),
+        (0.0, 0.0, 0.02, 15.0, 0.0),
+        (10.0, 0.0, 0.0, 0.0, 0.0),
+        (-20.0, 5.0, 0.1, -10.0, 2.5),
+        (15.0, -10.0, 0.2, 0.0, -2.5),
+        (0.0, 10.0, -0.15, 20.0, 0.0),
     ]
 
 
@@ -61,10 +61,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     rig.reset()
     imageio.imwrite(args.out_dir / "frame_000.png", rig.render(frame))
 
-    for index, (dpan, dtilt, dzoom, forward, strafe, dyaw, dpitch) in enumerate(
-        generate_sample_actions(), start=1
-    ):
-        state = rig.apply(dpan, dtilt, dzoom, forward, strafe, dyaw, dpitch)
+    for index, (dpan, dtilt, dzoom, dyaw, dpitch) in enumerate(generate_sample_actions(), start=1):
+        state = rig.apply(dpan, dtilt, dzoom, dyaw, dpitch)
         viewport = rig.render(frame)
         output_path = args.out_dir / f"frame_{index:03d}.png"
         imageio.imwrite(output_path, viewport)
