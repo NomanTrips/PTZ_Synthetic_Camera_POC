@@ -42,9 +42,9 @@ placing the viewport on the source frame:
   expressed in **pixels** (default), **degrees** (converted using the rig FOV),
   or **normalized** units. The values shown in the HUD and stored in the
   dataset use this basis directly.
-* **FPS-style movement** (enabled with `--fps-controls`) integrates WASD input
-  into the planar position using `position_speed` units per tick. Mouse motion
-  adjusts yaw/pitch for movement; pan/tilt still control the viewport itself.
+* **FPS-style movement** (enabled with `--fps-controls`) uses the mouse to pan
+  and tilt the viewport directly while respecting the same limits as WASD
+  input. In this mode, `W`/`S` perform a dolly zoom (adjusting `zoom_norm`).
 
 Translation is clamped each render so the cropped viewport always stays inside
 the frame, respecting the current zoom level and pan/tilt orientation. Zooming
