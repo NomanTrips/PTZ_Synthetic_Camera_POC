@@ -139,12 +139,15 @@ class Rig:
         """Apply incremental deltas to the current pose."""
 
         max_dpan, max_dtilt, max_dzoom = self.max_deltas
-        dpan = self._clamp(dpan, -max_dpan, max_dpan)
-        dtilt = self._clamp(dtilt, -max_dtilt, max_dtilt)
+        effective_dpan = dpan + dyaw * self.yaw_sensitivity
+        effective_dtilt = dtilt + dpitch * self.pitch_sensitivity
+
+        effective_dpan = self._clamp(effective_dpan, -max_dpan, max_dpan)
+        effective_dtilt = self._clamp(effective_dtilt, -max_dtilt, max_dtilt)
         dzoom = self._clamp(dzoom, -max_dzoom, max_dzoom)
 
-        pan = self._clamp(self._state.pan_deg + dpan, *self.pan_limits)
-        tilt = self._clamp(self._state.tilt_deg + dtilt, *self.tilt_limits)
+        pan = self._clamp(self._state.pan_deg + effective_dpan, *self.pan_limits)
+        tilt = self._clamp(self._state.tilt_deg + effective_dtilt, *self.tilt_limits)
         zoom = self._clamp(self._state.zoom_norm + dzoom, *self.zoom_limits)
 
         yaw = self._wrap_angle(self._state.yaw_deg + dyaw * self.yaw_sensitivity)
